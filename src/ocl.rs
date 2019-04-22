@@ -41,7 +41,11 @@ pub struct GpuContext {
     ldim0: [usize; 3],
     gdim0: [usize; 3],
     kernel1: core::Kernel,
+    ldim1: [usize; 3],
+    gdim1: [usize; 3],
     kernel2: core::Kernel,
+    ldim2: [usize; 3],
+    gdim2: [usize; 3],
     buffer_gpu: core::Mem,
     gensig_gpu: core::Mem,
     pub worksize: usize,
@@ -73,14 +77,23 @@ impl GpuContext {
         )
         .unwrap();
         let queue = core::create_command_queue(&context, &device_id, None).unwrap();
+        
         let kernel0 = core::create_kernel(&program, "noncegen").unwrap();
-        let kernel_workgroup_size = get_kernel_work_group_size(&kernel0, device_id);
+        let kernel0_workgroup_size = get_kernel_work_group_size(&kernel0, device_id);
         let workgroup_count = cores;
-        let worksize = kernel_workgroup_size * workgroup_count;
+        let worksize = kernel0_workgroup_size * workgroup_count;
         let gdim0 = [worksize, 1, 1];
-        let ldim0 = [kernel_workgroup_size, 1, 1];
+        let ldim0 = [kernel0_workgroup_size, 1, 1];
+        
         let kernel1 = core::create_kernel(&program, "calculate_deadlines").unwrap();
+         
+        let gdim1 = [worksize, 1, 1];
+        let ldim1 = [kernel0_workgroup_size, 1, 1];
+
         let kernel2 = core::create_kernel(&program, "find_min").unwrap();
+        let kernel2_workgroup_size = get_kernel_work_group_size(&kernel2, device_id);
+        let gdim2 = [kernel2_workgroup_size, 1, 1];
+        let ldim2 = [kernel2_workgroup_size, 1, 1];
 
         // create buffers
         let buffer_gpu = unsafe {
@@ -98,7 +111,7 @@ impl GpuContext {
         };
 
         let deadlines_gpu = unsafe {
-            core::create_buffer::<_, u64>(&context, core::MEM_READ_WRITE, gdim0[0], None).unwrap()
+            core::create_buffer::<_, u64>(&context, core::MEM_READ_WRITE, gdim1[0], None).unwrap()
         };
 
         let best_offset_gpu = unsafe {
@@ -115,7 +128,11 @@ impl GpuContext {
             ldim0,
             gdim0,
             kernel1,
+            ldim1,
+            gdim1,
             kernel2,
+            ldim2,
+            gdim2,
             buffer_gpu,
             gensig_gpu,
             worksize,
@@ -383,8 +400,8 @@ pub fn gpu_hash(gpu_context: &Arc<GpuContext>, task: &GpuTask) -> (u64, u64) {
             &gpu_context.kernel1,
             1,
             None,
-            &gpu_context.gdim0,
-            Some(gpu_context.ldim0),
+            &gpu_context.gdim1,
+            Some(gpu_context.ldim1),
             None::<Event>,
             None::<&mut Event>,
         )
@@ -406,7 +423,7 @@ pub fn gpu_hash(gpu_context: &Arc<GpuContext>, task: &GpuTask) -> (u64, u64) {
     core::set_kernel_arg(
         &gpu_context.kernel2,
         2,
-        ArgVal::local::<u32>(&gpu_context.ldim0[0]),
+        ArgVal::local::<u32>(&gpu_context.ldim2[0]),
     )
     .unwrap();
     core::set_kernel_arg(
@@ -428,14 +445,14 @@ pub fn gpu_hash(gpu_context: &Arc<GpuContext>, task: &GpuTask) -> (u64, u64) {
             &gpu_context.kernel2,
             1,
             None,
-            &gpu_context.gdim0,
-            Some(gpu_context.ldim0),
+            &gpu_context.gdim2,
+            Some(gpu_context.ldim2),
             None::<Event>,
             None::<&mut Event>,
         )
         .unwrap();
     }
-    
+
     get_result(&gpu_context)
 
 }

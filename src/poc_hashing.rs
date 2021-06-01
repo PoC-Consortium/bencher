@@ -7,7 +7,7 @@ const HASH_SIZE: usize = 32;
 const HASH_CAP: usize = 4096;
 const NUM_SCOOPS: usize = 4096;
 const SCOOP_SIZE: usize = 64;
-pub const NONCE_SIZE: usize = (NUM_SCOOPS * SCOOP_SIZE);
+pub const NONCE_SIZE: usize = NUM_SCOOPS * SCOOP_SIZE;
 const MESSAGE_SIZE: usize = 16;
 
 pub fn decode_gensig(gensig: &str) -> [u8; 32] {

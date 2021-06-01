@@ -6,6 +6,8 @@ extern crate clap;
 #[macro_use]
 extern crate log;
 
+mod com;
+mod future;
 mod buffer;
 mod config;
 mod cpu_hasher;

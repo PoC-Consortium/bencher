@@ -3,6 +3,7 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::fs;
 use std::u32;
+use url::Url;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Cfg {
@@ -18,7 +19,8 @@ pub struct Cfg {
     #[serde(default = "default_blocktime")]
     pub blocktime: u64,
 
-    pub url: String,
+    #[serde(with = "url_serde")]
+    pub url: Url,
 
     #[serde(default = "default_gpus")]
     pub gpus: Vec<GpuConfig>,

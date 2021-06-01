@@ -1,244 +1,162 @@
-use crate::miner::NonceData;
-use bytes::Buf;
+use crate::com::api::{FetchError, MiningInfoResponse};
+use crate::com::client::{Client, ProxyDetails, SubmissionParameters};
+use crate::future::prio_retry::PrioRetry;
 use futures::future::Future;
 use futures::stream::Stream;
-use futures::{future, stream};
-use reqwest::header::HeaderName;
-use reqwest::r#async::{Chunk, ClientBuilder, Decoder, Request};
-use serde::de::{self, DeserializeOwned};
+use futures::sync::mpsc;
 use std::collections::HashMap;
-use std::fmt;
-use std::mem;
 use std::time::Duration;
 use std::u64;
-use url::form_urlencoded::byte_serialize;
+use tokio;
+use tokio::runtime::TaskExecutor;
 use url::Url;
 
 #[derive(Clone)]
 pub struct RequestHandler {
-    secret_phrase: String,
-    base_uri: Url,
-    timeout: Duration,
-    timeout_mi: Duration,
-    send_proxy_details: bool,
-    headers: reqwest::header::HeaderMap,
-}
-
-pub enum FetchError {
-    Http(reqwest::Error),
-    Pool(PoolError),
-}
-
-impl From<reqwest::Error> for FetchError {
-    fn from(err: reqwest::Error) -> FetchError {
-        FetchError::Http(err)
-    }
-}
-
-impl From<PoolError> for FetchError {
-    fn from(err: PoolError) -> FetchError {
-        FetchError::Pool(err)
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MiningInfo {
-    pub generation_signature: String,
-
-    #[serde(deserialize_with = "from_str_or_int")]
-    pub base_target: u64,
-
-    #[serde(deserialize_with = "from_str_or_int")]
-    pub height: u64,
-
-    #[serde(
-        default = "default_target_deadline",
-        deserialize_with = "from_str_or_int"
-    )]
-    pub target_deadline: u64,
-}
-
-fn default_target_deadline() -> u64 {
-    u64::MAX
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubmitNonceResponse {
-    pub deadline: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PoolErrorWrapper {
-    error: PoolError,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PoolError {
-    code: i32,
-    message: String,
-}
-
-// MOTHERFUCKING pool
-fn from_str_or_int<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: de::Deserializer<'de>,
-{
-    struct StringOrIntVisitor;
-
-    impl<'de> de::Visitor<'de> for StringOrIntVisitor {
-        type Value = u64;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("string or int")
-        }
-
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            v.parse::<u64>().map_err(de::Error::custom)
-        }
-
-        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
-            Ok(v)
-        }
-    }
-
-    deserializer.deserialize_any(StringOrIntVisitor)
+    client: Client,
+    tx_submit_data: mpsc::UnboundedSender<SubmissionParameters>,
 }
 
 impl RequestHandler {
     pub fn new(
         base_uri: Url,
-        mut secret_phrase: String,
+        secret_phrase: String,
         timeout: u64,
-        timeout_mi: u64,
         send_proxy_details: bool,
         additional_headers: HashMap<String, String>,
+        executor: TaskExecutor,
     ) -> RequestHandler {
-        let ua = "Bencher/".to_owned() + "1.0.0";
+        // TODO
+        let proxy_details = if send_proxy_details {
+            ProxyDetails::Enabled
+        } else {
+            ProxyDetails::Disabled
+        };
 
-        secret_phrase = byte_serialize(secret_phrase.as_bytes()).collect();
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("User-Agent", ua.to_owned().parse().unwrap());
-        if send_proxy_details {
-            headers.insert("X-Miner", ua.to_owned().parse().unwrap());
-            headers.insert(
-                "X-Minername",
-                hostname::get_hostname()
-                    .unwrap_or_else(|| "".to_owned())
-                    .parse()
-                    .unwrap(),
-            );
-            headers.insert(
-                "X-Plotfile",
-                ("ScavengerProxy/".to_owned()
-                    + &*hostname::get_hostname().unwrap_or_else(|| "".to_owned()))
-                    .parse()
-                    .unwrap(),
-            );
-        }
+        let client = Client::new(
+            base_uri,
+            secret_phrase,
+            timeout,
+            proxy_details,
+            additional_headers,
+        );
 
-        for (key, value) in additional_headers {
-            let header_name = HeaderName::from_bytes(&key.into_bytes()).unwrap();
-            headers.insert(header_name, value.parse().unwrap());
-        }
+        let (tx_submit_data, rx_submit_nonce_data) = mpsc::unbounded();
+        RequestHandler::handle_submissions(
+            client.clone(),
+            rx_submit_nonce_data,
+            tx_submit_data.clone(),
+            executor,
+        );
 
         RequestHandler {
-            secret_phrase,
-            base_uri,
-            timeout: Duration::from_millis(timeout),
-            timeout_mi: Duration::from_millis(timeout_mi),
-            send_proxy_details,
-            headers,
+            client,
+            tx_submit_data,
         }
     }
 
-    fn uri_for(&self, path: &str, query: &str) -> Url {
-        let mut url = self.base_uri.clone();
-        url.path_segments_mut()
-            .map_err(|_| "cannot be base")
-            .unwrap()
-            .pop_if_empty()
-            .push(path);
-        url.set_query(Some(query));
-        url
-    }
-
-    pub fn get_mining_info(&self) -> impl Future<Item = MiningInfo, Error = FetchError> {
-        do_req(
-            self.uri_for("burst", "requestType=getMiningInfo"),
-            reqwest::Method::GET,
-            self.headers.clone(),
-            self.timeout_mi,
-        )
-    }
-
-    pub fn submit_nonce(&self, nonce_data: NonceData) -> impl Future<Item = (), Error = ()> {
-        let mut query = format!(
-            "requestType=submitNonce&accountId={}&nonce={}&secretPhrase={}&blockheight={}",
-            nonce_data.numeric_id, nonce_data.nonce, &self.secret_phrase, nonce_data.height
-        );
-        // if pool mining also send the deadline (usefull for proxies)
-        if self.secret_phrase == "" {
-            query += &format!("&deadline={}", nonce_data.deadline);
-        }
-
-        let url = self.uri_for("burst", &query);
-        let timeout = self.timeout;
-        let mut headers = self.headers.clone();
-
-        headers.insert("X-Capacity", nonce_data.capacity.to_string().parse().unwrap());
-
-        stream::iter_ok(1..=3)
-            .and_then(move |retry| {
-                let nonce_data = nonce_data.clone();
-                do_req(url.clone(), reqwest::Method::POST, headers.clone(), timeout).then(
-                    move |res: Result<SubmitNonceResponse, FetchError>| match res {
-                        Ok(res) => {
-                            if nonce_data.deadline_adjusted != res.deadline {
-                                log_deadline_mismatch(
-                                    nonce_data.height,
-                                    nonce_data.numeric_id,
-                                    nonce_data.nonce,
-                                    nonce_data.deadline_adjusted,
-                                    res.deadline,
-                                );
-                            } else {
-                                log_submission_accepted(
-                                    nonce_data.numeric_id,
-                                    nonce_data.nonce,
-                                    nonce_data.deadline_adjusted,
-                                );
+    fn handle_submissions(
+        client: Client,
+        rx: mpsc::UnboundedReceiver<SubmissionParameters>,
+        tx_submit_data: mpsc::UnboundedSender<SubmissionParameters>,
+        executor: TaskExecutor,
+    ) {
+        let stream = PrioRetry::new(rx, Duration::from_secs(3))
+            .and_then(move |submission_params| {
+                let tx_submit_data = tx_submit_data.clone();
+                client
+                    .clone()
+                    .submit_nonce(&submission_params)
+                    .then(move |res| {
+                        match res {
+                            Ok(res) => {
+                                if submission_params.deadline != res.deadline {
+                                    log_deadline_mismatch(
+                                        submission_params.height,
+                                        submission_params.account_id,
+                                        submission_params.nonce,
+                                        submission_params.deadline,
+                                        res.deadline,
+                                    );
+                                } else {
+                                    log_submission_accepted(
+                                        submission_params.account_id,
+                                        submission_params.nonce,
+                                        submission_params.deadline,
+                                    );
+                                }
                             }
-                            Ok(true)
-                        }
-                        Err(FetchError::Pool(e)) => {
-                            log_submission_not_accepted(
-                                nonce_data.height,
-                                nonce_data.numeric_id,
-                                nonce_data.nonce,
-                                nonce_data.deadline_adjusted,
-                                e.code,
-                                &e.message,
-                            );
-                            Ok(true)
-                        }
-                        Err(_) => {
-                            log_submission_failed(
-                                retry,
-                                nonce_data.numeric_id,
-                                nonce_data.nonce,
-                                nonce_data.deadline_adjusted,
-                            );
-                            Ok(false)
-                        }
-                    },
-                )
+                            Err(FetchError::Pool(e)) => {
+                                // Very intuitive, if some pools send an empty message they are
+                                // experiencing too much load expect the submission to be resent later.
+                                if e.message.is_empty() || e.message == "limit exceeded" {
+                                    log_pool_busy(
+                                        submission_params.account_id,
+                                        submission_params.nonce,
+                                        submission_params.deadline,
+                                    );
+                                    let res = tx_submit_data.unbounded_send(submission_params);
+                                    if let Err(e) = res {
+                                        error!("can't send submission params: {}", e);
+                                    }
+                                } else {
+                                    log_submission_not_accepted(
+                                        submission_params.height,
+                                        submission_params.account_id,
+                                        submission_params.nonce,
+                                        submission_params.deadline,
+                                        e.code,
+                                        &e.message,
+                                    );
+                                }
+                            }
+                            Err(FetchError::Http(x)) => {
+                                log_submission_failed(
+                                    submission_params.account_id,
+                                    submission_params.nonce,
+                                    submission_params.deadline,
+                                    &x.to_string(),
+                                );
+                                let res = tx_submit_data.unbounded_send(submission_params);
+                                if let Err(e) = res {
+                                    error!("can't send submission params: {}", e);
+                                }
+                            }
+                        };
+                        Ok(())
+                    })
             })
-            .take_while(|success| future::ok(!success))
             .for_each(|_| Ok(()))
+            .map_err(|e| error!("can't handle submission params: {:?}", e));
+        executor.spawn(stream);
+    }
+
+    pub fn get_mining_info(&self) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
+        self.client.get_mining_info()
+    }
+
+    pub fn submit_nonce(
+        &self,
+        account_id: u64,
+        nonce: u64,
+        height: u64,
+        block: u64,
+        deadline_unadjusted: u64,
+        deadline: u64,
+        gen_sig: [u8; 32],
+    ) {
+        let res = self.tx_submit_data.unbounded_send(SubmissionParameters {
+            account_id,
+            nonce,
+            height,
+            block,
+            deadline_unadjusted,
+            deadline,
+            gen_sig,
+        });
+        if let Err(e) = res {
+            error!("can't send submission params: {}", e);
+        }
     }
 }
 
@@ -256,24 +174,14 @@ fn log_deadline_mismatch(
     );
 }
 
-fn log_submission_failed(retry: u8, account_id: u64, nonce: u64, deadline: u64) {
-    if retry < 3 {
-        warn!(
-            "{: <80}",
-            format!(
-                "submission failed:, attempt={}, account={}, nonce={}, deadline={}",
-                retry, account_id, nonce, deadline
-            )
-        );
-    } else {
-        error!(
-            "{: <80}",
-            format!(
-                "submission retries exhausted: account={}, nonce={}, deadline={}",
-                account_id, nonce, deadline
-            )
-        );
-    }
+fn log_submission_failed(account_id: u64, nonce: u64, deadline: u64, err: &str) {
+    warn!(
+        "{: <80}",
+        format!(
+            "submission failed, retrying: account={}, nonce={}, deadline={}, description={}",
+            account_id, nonce, deadline, err
+        )
+    );
 }
 
 fn log_submission_not_accepted(
@@ -298,43 +206,36 @@ fn log_submission_accepted(account_id: u64, nonce: u64, deadline: u64) {
     );
 }
 
-fn parse_json_result<T: DeserializeOwned>(body: &Chunk) -> Result<T, PoolError> {
-    match serde_json::from_slice(body.bytes()) {
-        Ok(x) => Ok(x),
-        _ => match serde_json::from_slice::<PoolErrorWrapper>(body.bytes()) {
-            Ok(x) => Err(x.error),
-            _ => {
-                let v = body.to_vec();
-                Err(PoolError {
-                    code: 0,
-                    message: String::from_utf8_lossy(&v).to_string(),
-                })
-            }
-        },
-    }
+fn log_pool_busy(account_id: u64, nonce: u64, deadline: u64) {
+    info!(
+        "pool busy, retrying: account={}, nonce={}, deadline={}",
+        account_id, nonce, deadline
+    );
 }
 
-fn do_req<T: DeserializeOwned>(
-    url: Url,
-    method: reqwest::Method,
-    headers: reqwest::header::HeaderMap,
-    timeout: Duration,
-) -> impl Future<Item = T, Error = FetchError> {
-    let mut req = Request::new(method, url);
-    req.headers_mut().extend(headers);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio;
 
-    ClientBuilder::new()
-        .timeout(timeout)
-        .build()
-        .unwrap()
-        .execute(req)
-        .and_then(|mut res| {
-            let body = mem::replace(res.body_mut(), Decoder::empty());
-            body.concat2()
-        })
-        .from_err::<FetchError>()
-        .and_then(|body| match parse_json_result(&body) {
-            Ok(x) => Ok(x),
-            Err(e) => Err(e.into()),
-        })
+    static BASE_URL: &str = "http://94.130.178.37:31000";
+
+    #[test]
+    fn test_submit_nonce() {
+        let rt = tokio::runtime::Runtime::new().expect("can't create runtime");
+
+        let request_handler = RequestHandler::new(
+            BASE_URL.parse().unwrap(),
+            HashMap::new(),
+            3,
+            12,
+            true,
+            HashMap::new(),
+            rt.executor(),
+        );
+
+        request_handler.submit_nonce(1337, 12, 111, 0, 7123, 1193, [0; 32]);
+
+        rt.shutdown_on_idle();
+    }
 }

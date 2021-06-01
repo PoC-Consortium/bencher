@@ -1,5 +1,5 @@
 numeric_id: 12234949781109786614      # numeric ID to emulate
-start_nonce: 0                        # start_nonce for emulation
+#start_nonce: 0                        # start_nonce for emulation, default = rand
 secret_phrase: 'sent innocent black neighbor nose cruel surround puff marry around dumb warn'    # empty for pool, passphrase for Burst solo
 blocktime: 240                        # needed for capacity estimate 
 

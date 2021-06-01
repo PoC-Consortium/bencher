@@ -20,6 +20,7 @@ pub struct RoundInfo {
     pub base_target: u64,
     pub scoop: u64,
     pub height: u64,
+    pub block: u64,
 }
 
 pub enum HasherMessage {
@@ -179,9 +180,11 @@ pub fn create_scheduler_thread(
                                 numeric_id,
                                 nonce,
                                 height,
+                                block: round.block,
                                 deadline,
                                 deadline_adjusted: deadline / round.base_target,
                                 capacity,
+                                base_target: round.base_target,
                             })
                             .expect("failed to send nonce data");
                     }

@@ -1,5 +1,6 @@
 use crate::config::Cfg;
 use crate::cpu_hasher::SimdExtension;
+use crate::future::interval::Interval;
 #[cfg(feature = "opencl")]
 use crate::ocl::GpuConfig;
 use crate::poc_hashing;
@@ -8,15 +9,13 @@ use crate::scheduler::create_scheduler_thread;
 use crate::scheduler::RoundInfo;
 use crossbeam_channel::unbounded;
 use futures::sync::mpsc;
-use std::cmp::{max, min};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::u64;
 use tokio::prelude::*;
 use tokio::runtime::TaskExecutor;
-use tokio::timer::Interval;
-use url::Url;
+use std::cmp::{max};
 
 const GENESIS_BASE_TARGET: u64 = 4_398_046_511_104;
 
@@ -31,12 +30,15 @@ pub struct Miner {
     target_deadline: u64,
     blocktime: u64,
     gpus: Vec<GpuConfig>,
+    get_mining_info_interval: u64,
 }
 
 pub struct State {
     generation_signature: String,
+    generation_signature_bytes: [u8; 32],
     base_target: u64,
     height: u64,
+    block: u64,
     server_target_deadline: u64,
     first: bool,
     outage: bool,
@@ -48,9 +50,11 @@ pub struct NonceData {
     pub numeric_id: u64,
     pub nonce: u64,
     pub height: u64,
+    pub block: u64,
     pub deadline: u64,
     pub deadline_adjusted: u64,
-    pub capacity: u64
+    pub capacity: u64,
+    pub base_target: u64
 }
 
 impl Miner {
@@ -60,15 +64,14 @@ impl Miner {
         cpu_threads: usize,
         executor: TaskExecutor,
     ) -> Miner {
-        let base_url = Url::parse(&cfg.url).expect("invalid mining server url");
-        info!("server: {}", base_url);
+        info!("server: {}", cfg.url);
         let request_handler = RequestHandler::new(
-            base_url,
+            cfg.url,
             cfg.secret_phrase,
             cfg.timeout,
-            min(cfg.timeout, max(500, cfg.get_mining_info_interval) - 200),
             cfg.send_proxy_details,
             cfg.additional_headers,
+            executor.clone(),
         );
 
         Miner {
@@ -82,6 +85,7 @@ impl Miner {
             target_deadline: cfg.target_deadline,
             blocktime: cfg.blocktime,
             gpus: cfg.gpus,
+            get_mining_info_interval: max(1000, cfg.get_mining_info_interval),
         }
     }
 
@@ -105,7 +109,9 @@ impl Miner {
 
         let state = Arc::new(Mutex::new(State {
             generation_signature: "".to_owned(),
+            generation_signature_bytes: [0; 32],
             height: 0,
+            block: 0,
             server_target_deadline: u64::MAX,
             base_target: 1,
             first: true,
@@ -116,9 +122,10 @@ impl Miner {
         let request_handler = self.request_handler.clone();
         let inner_state = state.clone();
         let inner_tx_rounds = tx_rounds.clone();
+        let get_mining_info_interval = self.get_mining_info_interval;
         // run main mining loop on core
         self.executor.clone().spawn(
-            Interval::new(Instant::now(), Duration::from_millis(1000))
+            Interval::new_interval(Duration::from_millis(get_mining_info_interval))
                 .for_each(move |_| {
                     let state = inner_state.clone();
                     let tx_rounds = inner_tx_rounds.clone();
@@ -129,6 +136,7 @@ impl Miner {
                                 if mining_info.generation_signature != state.generation_signature {
                                     state.generation_signature =
                                         mining_info.generation_signature.clone();
+                                    state.generation_signature_bytes = poc_hashing::decode_gensig(&mining_info.generation_signature);
                                     state.height = mining_info.height;
                                     state.best_deadline = u64::MAX;
                                     state.base_target = mining_info.base_target;
@@ -156,6 +164,7 @@ impl Miner {
                                             base_target: state.base_target,
                                             scoop: scoop as u64,
                                             height: state.height,
+                                            block: state.block,
                                         })
                                         .expect("main thread can't communicate with hasher thread");
                                 }
@@ -189,17 +198,25 @@ impl Miner {
         let target_deadline = self.target_deadline;
         let request_handler = self.request_handler.clone();
         let state = state.clone();
-        let inner_executor = self.executor.clone();
         self.executor.clone().spawn(
             rx_nonce_data
                 .for_each(move |nonce_data| {
                     let mut state = state.lock().unwrap();
+                    let deadline = nonce_data.deadline / nonce_data.base_target;
                     if state.height == nonce_data.height {
                         if state.best_deadline > nonce_data.deadline_adjusted
                             && nonce_data.deadline_adjusted < target_deadline
                         {
                             state.best_deadline = nonce_data.deadline_adjusted;
-                            inner_executor.spawn(request_handler.submit_nonce(nonce_data));
+                            request_handler.submit_nonce(
+                                nonce_data.numeric_id,
+                                nonce_data.nonce,
+                                nonce_data.height,
+                                nonce_data.block,
+                                nonce_data.deadline,
+                                deadline,
+                                state.generation_signature_bytes,
+                            );
                         }
                     }
                     Ok(())

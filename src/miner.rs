@@ -1,3 +1,4 @@
+use crate::com::api::MiningInfoResponse as MiningInfo;
 use crate::config::Cfg;
 use crate::cpu_hasher::SimdExtension;
 use crate::future::interval::Interval;
@@ -43,6 +44,49 @@ pub struct State {
     first: bool,
     outage: bool,
     best_deadline: u64,
+    scoop: u32,
+}
+
+impl State {
+    fn new() -> Self {
+        Self {
+            generation_signature: "".to_owned(),
+            generation_signature_bytes: [0; 32],
+            base_target: 1,
+            height: 0,
+            block: 0,
+            server_target_deadline: u64::MAX,
+            first: true,
+            outage: false,
+            best_deadline: u64::MAX,
+            scoop: 0,
+        }
+    }
+
+    fn update_mining_info(&mut self, mining_info: &MiningInfo) {
+        self.best_deadline= u64::MAX;
+        self.height = mining_info.height;
+        self.block += 1;
+        self.base_target = mining_info.base_target;
+        self.server_target_deadline = mining_info.target_deadline;
+
+        self.generation_signature_bytes =
+            poc_hashing::decode_gensig(&mining_info.generation_signature);
+        self.generation_signature = mining_info.generation_signature.clone();
+
+        let scoop =
+            poc_hashing::calculate_scoop(mining_info.height, &self.generation_signature_bytes);
+        info!(
+            "{: <80}",
+            format!(
+                "new block: height={}, scoop={}, netdiff={}",
+                mining_info.height,
+                scoop,
+                GENESIS_BASE_TARGET / 240 / mining_info.base_target,
+            )
+        );
+        self.scoop = scoop;
+    }
 }
 
 #[derive(Clone)]
@@ -107,17 +151,7 @@ impl Miner {
             tx_nonce_data.clone(),
         ));
 
-        let state = Arc::new(Mutex::new(State {
-            generation_signature: "".to_owned(),
-            generation_signature_bytes: [0; 32],
-            height: 0,
-            block: 0,
-            server_target_deadline: u64::MAX,
-            base_target: 1,
-            first: true,
-            outage: false,
-            best_deadline: u64::MAX,
-        }));
+        let state = Arc::new(Mutex::new(State::new()));
 
         let request_handler = self.request_handler.clone();
         let inner_state = state.clone();
@@ -133,36 +167,20 @@ impl Miner {
                         match mining_info {
                             Ok(mining_info) => {
                                 let mut state = state.lock().unwrap();
+                                state.first = false;
+                                if state.outage {
+                                    error!("{: <80}", "outage resolved.");
+                                    state.outage = false;
+                                }
                                 if mining_info.generation_signature != state.generation_signature {
-                                    state.generation_signature =
-                                        mining_info.generation_signature.clone();
-                                    state.generation_signature_bytes = poc_hashing::decode_gensig(&mining_info.generation_signature);
-                                    state.height = mining_info.height;
-                                    state.best_deadline = u64::MAX;
-                                    state.base_target = mining_info.base_target;
-                                    state.server_target_deadline = mining_info.target_deadline;
-
-                                    let gensig = poc_hashing::decode_gensig(
-                                        &mining_info.generation_signature,
-                                    );
-
-                                    let scoop =
-                                        poc_hashing::calculate_scoop(mining_info.height, &gensig);
-                                    info!(
-                                        "{: <80}",
-                                        format!(
-                                            "new block: height={}, scoop={}, netdiff={}",
-                                            mining_info.height,
-                                            scoop,
-                                            GENESIS_BASE_TARGET / 240 / mining_info.base_target,
-                                        )
-                                    );
+                                    state.update_mining_info(&mining_info);
+                                   
                                     // communicate new round hasher
                                     tx_rounds
                                         .send(RoundInfo {
-                                            gensig,
+                                            gensig: state.generation_signature_bytes,
                                             base_target: state.base_target,
-                                            scoop: scoop as u64,
+                                            scoop: state.scoop.into(),
                                             height: state.height,
                                             block: state.block,
                                         })
@@ -203,7 +221,7 @@ impl Miner {
                 .for_each(move |nonce_data| {
                     let mut state = state.lock().unwrap();
                     let deadline = nonce_data.deadline / nonce_data.base_target;
-                    if state.height == nonce_data.height {
+                    if state.block == nonce_data.block {
                         if state.best_deadline > nonce_data.deadline_adjusted
                             && nonce_data.deadline_adjusted < target_deadline
                         {

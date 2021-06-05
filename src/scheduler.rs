@@ -27,7 +27,7 @@ pub enum HasherMessage {
     CpuRequestForWork,
     GpuRequestForWork(usize),
     NoncesProcessed(u64),
-    SubmitDeadline((u64, u64, u64)), //(height, nonce, deadline)
+    SubmitDeadline((u64, u64, u64, u64)), //(height, nonce, deadline, block)
 }
 
 pub fn create_scheduler_thread(
@@ -171,16 +171,17 @@ pub fn create_scheduler_thread(
                     HasherMessage::NoncesProcessed(nonces) => {
                         processed += nonces;
                     }
-                    HasherMessage::SubmitDeadline((height, nonce, deadline)) => {
-                        // calc capcaity
+                    HasherMessage::SubmitDeadline((height, nonce, deadline, block)) => {
+                        // calc capacity
                         let capacity = requested * 250 * blocktime / 1024 / (1 + sw.elapsed_ms()) as u64;
+                        //processed as f64 * 1000.0 / 4.0 / 1024.0 / (1 + sw.elapsed_ms()) as f64 * blocktime as f64
                         tx_nonce
                             .clone()
                             .unbounded_send(NonceData {
                                 numeric_id,
                                 nonce,
                                 height,
-                                block: round.block,
+                                block,
                                 deadline,
                                 deadline_adjusted: deadline / round.base_target,
                                 capacity,
@@ -200,10 +201,13 @@ pub fn create_scheduler_thread(
 fn print_status(processed: u64, sw: &Stopwatch, blocktime: u64) {
     let datetime = Local::now();
     print!(
-        "\r{} [STATS] nonces generated: {}, nonces/minute: {:.2}, emulated size={:.2} GiB",
-        datetime.format("%H:%M:%S"),
-        sw.elapsed_ms(),
-        processed as f64 * 1000.0 * 60.0 / (1 + sw.elapsed_ms()) as f64,
-        processed as f64 * 1000.0 / 4.0 / 1024.0 / (1 + sw.elapsed_ms()) as f64 * blocktime as f64,
+        "{: <80}",
+        format!(
+            "\r{} [STATS] nonces generated: {}, nonces/minute: {:.2}, emulated size={:.2} GiB",
+            datetime.format("%H:%M:%S"),
+            sw.elapsed_ms(),
+            processed as f64 * 1000.0 * 60.0 / (1 + sw.elapsed_ms()) as f64,
+            processed as f64 * 1000.0 / 4.0 / 1024.0 / (1 + sw.elapsed_ms()) as f64 * blocktime as f64,
+        )
     );
 }

@@ -30,6 +30,7 @@ pub fn create_gpu_hasher_thread(
                         task.round.height,
                         task.local_startnonce + offset,
                         deadline,
+                        task.round.block,
                     )))
                     .expect("GPU task can't communicate with scheduler thread.");
 

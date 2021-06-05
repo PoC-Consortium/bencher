@@ -229,12 +229,13 @@ pub fn hash_cpu(
             hasher_task.round.height,
             hasher_task.local_startnonce + offset,
             deadline,
+            hasher_task.round.block,
         )))
-        .expect("GPU task can't communicate with scheduler thread.");
+        .expect("CPU task can't communicate with scheduler thread.");
 
         tx.send(HasherMessage::NoncesProcessed(hasher_task.local_nonces))
-            .expect("GPU task can't communicate with scheduler thread.");
+            .expect("CPU task can't communicate with scheduler thread.");
         tx.send(HasherMessage::CpuRequestForWork)
-            .expect("GPU task can't communicate with scheduler thread.");
+            .expect("CPU task can't communicate with scheduler thread.");
     }
 }

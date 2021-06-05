@@ -10,6 +10,7 @@ use std::u64;
 use tokio;
 use tokio::runtime::TaskExecutor;
 use url::Url;
+use stopwatch::Stopwatch;
 
 #[derive(Clone)]
 pub struct RequestHandler {
@@ -64,10 +65,13 @@ impl RequestHandler {
         let stream = PrioRetry::new(rx, Duration::from_secs(3))
             .and_then(move |submission_params| {
                 let tx_submit_data = tx_submit_data.clone();
+                let mut sw = Stopwatch::new();
+                sw.start();
                 client
                     .clone()
                     .submit_nonce(&submission_params)
                     .then(move |res| {
+                        sw.stop();
                         match res {
                             Ok(res) => {
                                 if submission_params.deadline != res.deadline {
@@ -77,12 +81,15 @@ impl RequestHandler {
                                         submission_params.nonce,
                                         submission_params.deadline,
                                         res.deadline,
+                                        sw.elapsed_ms()
                                     );
                                 } else {
                                     log_submission_accepted(
+                                        submission_params.height,
                                         submission_params.account_id,
                                         submission_params.nonce,
                                         submission_params.deadline,
+                                        sw.elapsed_ms()
                                     );
                                 }
                             }
@@ -91,9 +98,11 @@ impl RequestHandler {
                                 // experiencing too much load expect the submission to be resent later.
                                 if e.message.is_empty() || e.message == "limit exceeded" {
                                     log_pool_busy(
+                                        submission_params.height,
                                         submission_params.account_id,
                                         submission_params.nonce,
                                         submission_params.deadline,
+                                        sw.elapsed_ms()
                                     );
                                     let res = tx_submit_data.unbounded_send(submission_params);
                                     if let Err(e) = res {
@@ -105,6 +114,7 @@ impl RequestHandler {
                                         submission_params.account_id,
                                         submission_params.nonce,
                                         submission_params.deadline,
+                                        sw.elapsed_ms(),
                                         e.code,
                                         &e.message,
                                     );
@@ -112,6 +122,7 @@ impl RequestHandler {
                             }
                             Err(FetchError::Http(x)) => {
                                 log_submission_failed(
+                                    submission_params.height,
                                     submission_params.account_id,
                                     submission_params.nonce,
                                     submission_params.deadline,
@@ -166,20 +177,21 @@ fn log_deadline_mismatch(
     nonce: u64,
     deadline: u64,
     deadline_pool: u64,
+    latency: i64,
 ) {
     error!(
-        "submit: deadlines mismatch, height={}, account={}, nonce={}, \
-         deadline_miner={}, deadline_pool={}",
-        height, account_id, nonce, deadline, deadline_pool
+        "dl mismatch: height={}, id={}, nonce={}, \
+         dl_miner={}, dl_pool={}, latency={}ms",
+        height, account_id, nonce, deadline, deadline_pool, latency
     );
 }
 
-fn log_submission_failed(account_id: u64, nonce: u64, deadline: u64, err: &str) {
+fn log_submission_failed(height: u64, account_id: u64, nonce: u64, deadline: u64, err: &str) {
     warn!(
         "{: <80}",
         format!(
-            "submission failed, retrying: account={}, nonce={}, deadline={}, description={}",
-            account_id, nonce, deadline, err
+            "submission failed, retrying: height={}, id={}, nonce={}, dl={}, response={}",
+            height, account_id, nonce, deadline, err
         )
     );
 }
@@ -189,27 +201,28 @@ fn log_submission_not_accepted(
     account_id: u64,
     nonce: u64,
     deadline: u64,
+    latency: i64,
     err_code: i32,
     msg: &str,
 ) {
     error!(
-        "submission not accepted: height={}, account={}, nonce={}, \
-         deadline={}\n\tcode: {}\n\tmessage: {}",
-        height, account_id, nonce, deadline, err_code, msg,
+        "dl rejected: height={}, id={}, nonce={}, \
+         dl={}, latency={}ms\n\tcode: {}\n\tmessage: {}",
+        height, account_id, nonce, deadline, latency, err_code, msg,
     );
 }
 
-fn log_submission_accepted(account_id: u64, nonce: u64, deadline: u64) {
+fn log_submission_accepted(height: u64, account_id: u64, nonce: u64, deadline: u64, latency: i64) {
     info!(
-        "deadline accepted: account={}, nonce={}, deadline={}",
-        account_id, nonce, deadline
+        "dl accepted: height={}, id={}, nonce={}, dl={}, latency={}ms",
+        height, account_id, nonce, deadline, latency
     );
 }
 
-fn log_pool_busy(account_id: u64, nonce: u64, deadline: u64) {
+fn log_pool_busy(height: u64, account_id: u64, nonce: u64, deadline: u64, latency: i64) {
     info!(
-        "pool busy, retrying: account={}, nonce={}, deadline={}",
-        account_id, nonce, deadline
+        "pool busy, retrying: height={}, id={}, nonce={}, dl={}, latency={}ms",
+        height, account_id, nonce, deadline, latency
     );
 }
 

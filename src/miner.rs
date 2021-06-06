@@ -45,6 +45,7 @@ pub struct State {
     outage: bool,
     best_deadline: u64,
     scoop: u32,
+    capacity: u64,
 }
 
 impl State {
@@ -60,6 +61,7 @@ impl State {
             outage: false,
             best_deadline: u64::MAX,
             scoop: 0,
+            capacity: 0,
         }
     }
 
@@ -162,8 +164,12 @@ impl Miner {
             Interval::new_interval(Duration::from_millis(get_mining_info_interval))
                 .for_each(move |_| {
                     let state = inner_state.clone();
+                    let state2 = inner_state.clone();
+                    let state2 = state2.lock().unwrap();
+                    let capacity = state2.capacity;
+                    drop(state2);
                     let tx_rounds = inner_tx_rounds.clone();
-                    request_handler.get_mining_info().then(move |mining_info| {
+                    request_handler.get_mining_info(capacity).then(move |mining_info| {
                         match mining_info {
                             Ok(mining_info) => {
                                 let mut state = state.lock().unwrap();
@@ -220,6 +226,7 @@ impl Miner {
             rx_nonce_data
                 .for_each(move |nonce_data| {
                     let mut state = state.lock().unwrap();
+                    state.capacity = nonce_data.capacity;
                     let deadline = nonce_data.deadline / nonce_data.base_target;
                     if state.block == nonce_data.block {
                         if state.best_deadline > nonce_data.deadline_adjusted

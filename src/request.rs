@@ -142,8 +142,8 @@ impl RequestHandler {
         executor.spawn(stream);
     }
 
-    pub fn get_mining_info(&self) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
-        self.client.get_mining_info()
+    pub fn get_mining_info(&self, capacity: u64) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
+        self.client.get_mining_info(capacity)
     }
 
     pub fn submit_nonce(

@@ -137,10 +137,15 @@ impl Client {
     }
 
     /// Get current mining info.
-    pub fn get_mining_info(&self) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
+    pub fn get_mining_info(&self, capacity: u64) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
+        let mut headers = (*self.headers).clone();
+        headers.insert(
+            "X-Capacity",
+            capacity.to_string().parse().unwrap(),
+        );
         self.inner
             .get(self.uri_for("burst"))
-            .headers((*self.headers).clone())
+            .headers(headers)          
             .query(&GetMiningInfoRequest {
                 request_type: &"getMiningInfo",
             })

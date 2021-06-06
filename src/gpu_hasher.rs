@@ -26,6 +26,9 @@ pub fn create_gpu_hasher_thread(
                     let (deadline, offset) = gpu_hash(&gpu_context, &task);
 
                     // report hashing done
+                    tx.send(HasherMessage::NoncesProcessed(task.local_nonces))
+                        .expect("GPU task can't communicate with scheduler thread.");
+
                     tx.send(HasherMessage::SubmitDeadline((
                         task.round.height,
                         task.local_startnonce + offset,
@@ -34,8 +37,6 @@ pub fn create_gpu_hasher_thread(
                     )))
                     .expect("GPU task can't communicate with scheduler thread.");
 
-                    tx.send(HasherMessage::NoncesProcessed(task.local_nonces))
-                        .expect("GPU task can't communicate with scheduler thread.");
                     tx.send(HasherMessage::GpuRequestForWork(gpu_id))
                         .expect("GPU task can't communicate with scheduler thread.");
                 }

@@ -173,8 +173,7 @@ pub fn create_scheduler_thread(
                     }
                     HasherMessage::SubmitDeadline((height, nonce, deadline, block)) => {
                         // calc capacity
-                        let capacity = requested * 250 * blocktime / 1024 / (1 + sw.elapsed_ms()) as u64;
-                        //processed as f64 * 1000.0 / 4.0 / 1024.0 / (1 + sw.elapsed_ms()) as f64 * blocktime as f64
+                        let capacity = processed * 250 * blocktime / 1024 / (1 + sw.elapsed_ms()) as u64;
                         tx_nonce
                             .clone()
                             .unbounded_send(NonceData {
@@ -203,10 +202,11 @@ fn print_status(processed: u64, sw: &Stopwatch, blocktime: u64) {
     print!(
         "{: <80}",
         format!(
-            "\r{} [STATS] nonces generated: {}, nonces/minute: {:.2}, emulated size={:.2} GiB",
+            "\r{} [STATS] nonces: {}, npm: {:.0}, hashrate: {:.2}MH/s, avg_size={:.2}GiB",
             datetime.format("%H:%M:%S"),
-            sw.elapsed_ms(),
+            processed,
             processed as f64 * 1000.0 * 60.0 / (1 + sw.elapsed_ms()) as f64,
+            processed as f64 / 1000.0 * 8192.0 / (1 + sw.elapsed_ms()) as f64,
             processed as f64 * 1000.0 / 4.0 / 1024.0 / (1 + sw.elapsed_ms()) as f64 * blocktime as f64,
         )
     );

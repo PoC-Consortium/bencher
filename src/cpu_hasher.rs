@@ -225,6 +225,9 @@ pub fn hash_cpu(
         }
 
         // report hashing done
+        tx.send(HasherMessage::NoncesProcessed(hasher_task.local_nonces))
+            .expect("CPU task can't communicate with scheduler thread.");
+
         tx.send(HasherMessage::SubmitDeadline((
             hasher_task.round.height,
             hasher_task.local_startnonce + offset,
@@ -233,8 +236,6 @@ pub fn hash_cpu(
         )))
         .expect("CPU task can't communicate with scheduler thread.");
 
-        tx.send(HasherMessage::NoncesProcessed(hasher_task.local_nonces))
-            .expect("CPU task can't communicate with scheduler thread.");
         tx.send(HasherMessage::CpuRequestForWork)
             .expect("CPU task can't communicate with scheduler thread.");
     }

@@ -81,49 +81,53 @@ pub fn create_scheduler_thread(
         }
 
         let mut sw = Stopwatch::start_new();
+        let mut init = true;
 
         for round in &rx_rounds {
             sw.restart();
             let nonces_to_hash = u64::MAX - start_nonce;
             let mut requested = 0u64;
             let mut processed = 0u64;
-
-            // kickoff first gpu and cpu runs
-            #[cfg(feature = "opencl")]
-            for (i, gpu) in gpus.iter().enumerate() {
-                // schedule next gpu task
-                let task_size = min(gpu.worksize as u64, nonces_to_hash - requested);
-                if task_size > 0 {
-                    gpu_channels[i]
-                        .0
-                        .send(Some(GpuTask {
-                            numeric_id,
-                            local_startnonce: start_nonce + requested,
-                            local_nonces: task_size,
-                            round: round.clone(),
-                        }))
-                        .unwrap();
+            
+            if init{
+                // kickoff first gpu and cpu runs
+                #[cfg(feature = "opencl")]
+                for (i, gpu) in gpus.iter().enumerate() {
+                    // schedule next gpu task
+                    let task_size = min(gpu.worksize as u64, nonces_to_hash - requested);
+                    if task_size > 0 {
+                        gpu_channels[i]
+                            .0
+                            .send(Some(GpuTask {
+                                numeric_id,
+                                local_startnonce: start_nonce + requested,
+                                local_nonces: task_size,
+                                round: round.clone(),
+                            }))
+                            .unwrap();
+                    }
+                    requested += task_size;
                 }
-                requested += task_size;
-            }
 
-            // kickoff first cpu runs
-            for _ in 0..cpu_threads {
-                let task_size = min(cpu_task_size, nonces_to_hash - requested);
-                if task_size > 0 {
-                    let task = hash_cpu(
-                        tx.clone(),
-                        CpuTask {
-                            numeric_id,
-                            local_startnonce: start_nonce + requested,
-                            local_nonces: task_size,
-                            round: round.clone(),
-                        },
-                        simd_ext.clone(),
-                    );
-                    thread_pool.spawn(task);
+                // kickoff first cpu runs
+                for _ in 0..cpu_threads {
+                    let task_size = min(cpu_task_size, nonces_to_hash - requested);
+                    if task_size > 0 {
+                        let task = hash_cpu(
+                            tx.clone(),
+                            CpuTask {
+                                numeric_id,
+                                local_startnonce: start_nonce + requested,
+                                local_nonces: task_size,
+                                round: round.clone(),
+                            },
+                            simd_ext.clone(),
+                        );
+                        thread_pool.spawn(task);
+                    }
+                    requested += task_size;
                 }
-                requested += task_size;
+                init = false;
             }
 
             // control loop

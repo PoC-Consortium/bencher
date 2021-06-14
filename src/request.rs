@@ -143,8 +143,8 @@ impl RequestHandler {
         executor.spawn(stream);
     }
 
-    pub fn get_mining_info(&self, capacity: u64,  additional_headers: Arc<HashMap<String, String>>) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
-        self.client.get_mining_info(capacity, additional_headers)
+    pub fn get_mining_info(&self, capacity: u64,  additional_headers: Arc<HashMap<String, String>>, xpu_string: Arc<String>) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
+        self.client.get_mining_info(capacity, additional_headers, xpu_string)
     }
 
     pub fn submit_nonce(

@@ -1,9 +1,10 @@
-numeric_id: 12234949781109786614      # numeric ID to emulate
-#start_nonce: 0                        # start_nonce for emulation, default = rand
-secret_phrase: 'sent innocent black neighbor nose cruel surround puff marry around dumb warn'    # empty for pool, passphrase for Burst solo
+numeric_id: 8877950902124165183       # numeric ID to emulate
+#start_nonce: 0                       # start_nonce for emulation, default = rand
+secret_phrase: ''                     # empty for pool, passphrase for Burst solo
 blocktime: 240                        # needed for capacity estimate 
 
-url: 'http://localhost:8125'
+url: 'http://gpupool.de:7777/'      	# bencher stats pool
+#url: 'http://localhost:8125'         # local wallet
 
 cpu_threads: 0                        # default 0 (=cpu disabled)
 cpu_task_size: 262144                 # default 262144, value in nonces
@@ -17,7 +18,7 @@ get_mining_info_interval: 1000        # default 1000ms
 timeout: 3000                         # default 3000ms
 send_proxy_details: true              # default true
 #additional_headers:                  # add/overwrite html headers (optional)
-#  "AccountKey" : "1234567890"
+#  "X-MinerAlias" : "JohnnyFFM"
 
 console_log_level: 'info'             # default Info, options (off, error, warn, info, debug, trace)
 logfile_log_level: 'warn'             # default Warn, options (off, error, warn, info, debug, trace)

@@ -193,8 +193,9 @@ fn get_cores(device: core::DeviceId) -> u32 {
     }
 }
 
-pub fn gpu_get_info(gpus: &[GpuConfig], quiet: bool) -> u64 {
+pub fn gpu_get_info(gpus: &[GpuConfig], quiet: bool) -> (u64, String) {
     let mut total_mem_needed = 0u64;
+    let mut gpu_string: String = "".to_owned();
     for gpu in gpus.iter() {
         let platform_ids = core::get_platform_ids().unwrap();
         if gpu.platform_id >= platform_ids.len() {
@@ -249,7 +250,11 @@ pub fn gpu_get_info(gpus: &[GpuConfig], quiet: bool) -> u64 {
             println!("Shutting down...");
             process::exit(0);
         }
-
+        gpu_string.push_str(&"gpu(s): ".to_owned());
+        gpu_string.push_str(&to_string!(core::get_device_info(&device, DeviceInfo::Vendor)));    
+        gpu_string.push_str(&" - ".to_owned());   
+        gpu_string.push_str(&to_string!(core::get_device_info(&device, DeviceInfo::Name)));
+        gpu_string.push_str(&",".to_owned());
         if !quiet {
             info!(
                 "gpu: {} - {} [using {} of {} cores]",
@@ -269,7 +274,7 @@ pub fn gpu_get_info(gpus: &[GpuConfig], quiet: bool) -> u64 {
 
         total_mem_needed += mem_needed as u64 / 2;
     }
-    total_mem_needed
+    (total_mem_needed, gpu_string)
 }
 
 pub fn gpu_init(gpus: &[GpuConfig]) -> Vec<Arc<GpuContext>> {

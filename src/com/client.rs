@@ -137,11 +137,15 @@ impl Client {
     }
 
     /// Get current mining info.
-    pub fn get_mining_info(&self, capacity: u64, additional_headers: Arc<HashMap<String, String>>) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
+    pub fn get_mining_info(&self, capacity: u64, additional_headers: Arc<HashMap<String, String>>, xpu_string : Arc<String>) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
         let mut headers = (*self.headers).clone();
         headers.insert(
             "X-Capacity",
             capacity.to_string().parse().unwrap(),
+        );
+        headers.insert(
+            "X-Xpu",
+            xpu_string.parse().unwrap(),
         );
         for (key, value) in &*additional_headers {
             let header_name = HeaderName::from_bytes(&key.clone().into_bytes()).unwrap();

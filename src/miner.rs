@@ -33,7 +33,8 @@ pub struct Miner {
     blocktime: u64,
     gpus: Vec<GpuConfig>,
     get_mining_info_interval: u64,
-    additional_headers: Arc<HashMap<String, String>>
+    additional_headers: Arc<HashMap<String, String>>,
+    xpu_string: String,
 }
 
 pub struct State {
@@ -111,6 +112,7 @@ impl Miner {
         simd_extensions: SimdExtension,
         cpu_threads: usize,
         executor: TaskExecutor,
+        xpu_string: String,
     ) -> Miner {
         info!("server: {}", cfg.url);
         let additional_headers = Arc::new(cfg.additional_headers);
@@ -136,6 +138,7 @@ impl Miner {
             gpus: cfg.gpus,
             get_mining_info_interval: max(1000, cfg.get_mining_info_interval),
             additional_headers: additional_headers.clone(),
+            xpu_string,
         }
     }
 
@@ -164,6 +167,7 @@ impl Miner {
         let inner_tx_rounds = tx_rounds.clone();
         let get_mining_info_interval = self.get_mining_info_interval;
         let additional_headers = self.additional_headers.clone();
+        let xpu_string = Arc::new(self.xpu_string);
         // run main mining loop on core
         self.executor.clone().spawn(
             Interval::new_interval(Duration::from_millis(get_mining_info_interval))
@@ -174,7 +178,7 @@ impl Miner {
                     let capacity = state2.capacity;
                     drop(state2);
                     let tx_rounds = inner_tx_rounds.clone();
-                    request_handler.get_mining_info(capacity, additional_headers.clone()).then(move |mining_info| {
+                    request_handler.get_mining_info(capacity, additional_headers.clone(), xpu_string.clone()).then(move |mining_info| {
                         match mining_info {
                             Ok(mining_info) => {
                                 let mut state = state.lock().unwrap();

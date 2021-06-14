@@ -104,14 +104,33 @@ fn main() {
         &simd_extension
     );
 
+    let mut cpu_string = format!(
+        "cpu: {} [using {} of {} cores{}{:?}]",
+        cpu_name,
+        cpu_threads,
+        num_cpus::get(),
+        if let SimdExtension::None = &simd_extension {
+            ""
+        } else {
+            " + "
+        },
+        &simd_extension
+    );
+
+    cpu_string.push_str(&", ".to_owned());
+
     #[cfg(not(feature = "opencl"))]
-    let gpu_mem_needed = 0u64;
+    let gpu_string = "".to_owned();
+    #[cfg(not(feature = "opencl"))]
+    let gpu_mem_needed = 0u64;    
     #[cfg(feature = "opencl")]
-    let _gpu_mem_needed = if !cfg_loaded.gpus.is_empty() {
+    let (_gpu_mem_needed, gpu_string) = if !cfg_loaded.gpus.is_empty() {
         gpu_get_info(&cfg_loaded.gpus, false)
     } else {
-        0
+        (0,"".to_owned())
     };
+    cpu_string.push_str(&gpu_string);
+        
     #[cfg(feature = "opencl")]
     info!("gpu extensions: OpenCL");
 
@@ -128,7 +147,7 @@ fn main() {
     );
 
     let rt = Builder::new().core_threads(1).build().unwrap();
-    let m = Miner::new(cfg_loaded, simd_extension, cpu_threads, rt.executor());
+    let m = Miner::new(cfg_loaded, simd_extension, cpu_threads, rt.executor(), cpu_string);
     m.run();
     rt.shutdown_on_idle().wait().unwrap();
 }

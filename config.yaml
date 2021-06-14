@@ -17,8 +17,8 @@ target_deadline: 18446744073709551615 # default 18446744073709551615 (Max)
 get_mining_info_interval: 1000        # default 1000ms
 timeout: 3000                         # default 3000ms
 send_proxy_details: true              # default true
-#additional_headers:                  # add/overwrite html headers (optional)
-#  "X-MinerAlias" : "JohnnyFFM"
+additional_headers:                   # add/overwrite html headers (optional)
+  "X-MinerAlias" : "unknown"
 
 console_log_level: 'info'             # default Info, options (off, error, warn, info, debug, trace)
 logfile_log_level: 'warn'             # default Warn, options (off, error, warn, info, debug, trace)

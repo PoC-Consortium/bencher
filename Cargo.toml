@@ -1,6 +1,6 @@
 [package]
 name = "bencher"
-version = "1.2.0"
+version = "1.2.3"
 license = "GPL-3.0"
 authors = ["JohnnyFFM EEBE108564A6E62C5A80D697127E61FDA6AB8FF710B5CAC1D379FA5A2A1132D4"]
 edition = "2018"

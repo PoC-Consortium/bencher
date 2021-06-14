@@ -73,7 +73,7 @@ pub enum ProxyDetails {
 
 impl Client {
     fn ua() -> String {
-        "Scavenger/".to_owned() + crate_version!()
+        "Bencher/".to_owned() + crate_version!()
     }
 
     fn submit_nonce_headers(

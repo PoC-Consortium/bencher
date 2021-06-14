@@ -78,7 +78,7 @@ impl Client {
 
     fn submit_nonce_headers(
         proxy_details: ProxyDetails,
-        additional_headers: HashMap<String, String>,
+        additional_headers: Arc<HashMap<String, String>>,
     ) -> HeaderMap {
         let ua = Client::ua();
         let mut headers = HeaderMap::new();
@@ -102,8 +102,8 @@ impl Client {
             );
         }
 
-        for (key, value) in additional_headers {
-            let header_name = HeaderName::from_bytes(&key.into_bytes()).unwrap();
+        for (key, value) in &*additional_headers {
+            let header_name = HeaderName::from_bytes(&key.clone().into_bytes()).unwrap();
             headers.insert(header_name, value.parse().unwrap());
         }
 
@@ -116,7 +116,7 @@ impl Client {
         secret_phrase: String,
         timeout: u64,
         proxy_details: ProxyDetails,
-        additional_headers: HashMap<String, String>,
+        additional_headers: Arc<HashMap<String, String>>,
     ) -> Self {
         let secret_phrase_encoded = byte_serialize(secret_phrase.as_bytes()).collect();
 
@@ -137,12 +137,16 @@ impl Client {
     }
 
     /// Get current mining info.
-    pub fn get_mining_info(&self, capacity: u64) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
+    pub fn get_mining_info(&self, capacity: u64, additional_headers: Arc<HashMap<String, String>>) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
         let mut headers = (*self.headers).clone();
         headers.insert(
             "X-Capacity",
             capacity.to_string().parse().unwrap(),
         );
+        for (key, value) in &*additional_headers {
+            let header_name = HeaderName::from_bytes(&key.clone().into_bytes()).unwrap();
+            headers.insert(header_name, value.parse().unwrap());
+        }
         self.inner
             .get(self.uri_for("burst"))
             .headers(headers)          

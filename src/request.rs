@@ -11,6 +11,7 @@ use tokio;
 use tokio::runtime::TaskExecutor;
 use url::Url;
 use stopwatch::Stopwatch;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct RequestHandler {
@@ -24,7 +25,7 @@ impl RequestHandler {
         secret_phrase: String,
         timeout: u64,
         send_proxy_details: bool,
-        additional_headers: HashMap<String, String>,
+        additional_headers: Arc<HashMap<String, String>>,
         executor: TaskExecutor,
     ) -> RequestHandler {
         // TODO
@@ -142,8 +143,8 @@ impl RequestHandler {
         executor.spawn(stream);
     }
 
-    pub fn get_mining_info(&self, capacity: u64) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
-        self.client.get_mining_info(capacity)
+    pub fn get_mining_info(&self, capacity: u64,  additional_headers: Arc<HashMap<String, String>>) -> impl Future<Item = MiningInfoResponse, Error = FetchError> {
+        self.client.get_mining_info(capacity, additional_headers)
     }
 
     pub fn submit_nonce(

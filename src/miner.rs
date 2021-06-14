@@ -17,6 +17,7 @@ use std::u64;
 use tokio::prelude::*;
 use tokio::runtime::TaskExecutor;
 use std::cmp::{max};
+use std::collections::HashMap;
 
 const GENESIS_BASE_TARGET: u64 = 4_398_046_511_104;
 
@@ -32,6 +33,7 @@ pub struct Miner {
     blocktime: u64,
     gpus: Vec<GpuConfig>,
     get_mining_info_interval: u64,
+    additional_headers: Arc<HashMap<String, String>>
 }
 
 pub struct State {
@@ -111,12 +113,13 @@ impl Miner {
         executor: TaskExecutor,
     ) -> Miner {
         info!("server: {}", cfg.url);
+        let additional_headers = Arc::new(cfg.additional_headers);
         let request_handler = RequestHandler::new(
             cfg.url,
             cfg.secret_phrase,
             cfg.timeout,
             cfg.send_proxy_details,
-            cfg.additional_headers,
+            additional_headers.clone(),
             executor.clone(),
         );
 
@@ -132,6 +135,7 @@ impl Miner {
             blocktime: cfg.blocktime,
             gpus: cfg.gpus,
             get_mining_info_interval: max(1000, cfg.get_mining_info_interval),
+            additional_headers: additional_headers.clone(),
         }
     }
 
@@ -159,6 +163,7 @@ impl Miner {
         let inner_state = state.clone();
         let inner_tx_rounds = tx_rounds.clone();
         let get_mining_info_interval = self.get_mining_info_interval;
+        let additional_headers = self.additional_headers.clone();
         // run main mining loop on core
         self.executor.clone().spawn(
             Interval::new_interval(Duration::from_millis(get_mining_info_interval))
@@ -169,7 +174,7 @@ impl Miner {
                     let capacity = state2.capacity;
                     drop(state2);
                     let tx_rounds = inner_tx_rounds.clone();
-                    request_handler.get_mining_info(capacity).then(move |mining_info| {
+                    request_handler.get_mining_info(capacity, additional_headers.clone()).then(move |mining_info| {
                         match mining_info {
                             Ok(mining_info) => {
                                 let mut state = state.lock().unwrap();
